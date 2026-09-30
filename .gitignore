@@ -28,3 +28,6 @@ logs/
 # Environment
 .env
 .env.local
+
+# 内部文档（不纳入版本提交）
+docs/
