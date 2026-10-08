@@ -2,6 +2,7 @@ package io.github.iweidujiang.promptab.autoconfigure;
 
 import io.github.iweidujiang.promptab.advisor.PromptRouterAdvisor;
 import io.github.iweidujiang.promptab.experiment.ExperimentRepository;
+import io.github.iweidujiang.promptab.experiment.ExperimentService;
 import io.github.iweidujiang.promptab.experiment.VariantRepository;
 import io.github.iweidujiang.promptab.router.PromptRouter;
 import org.junit.jupiter.api.Test;
@@ -35,13 +36,14 @@ class PromptAbAutoConfigurationTest {
             );
 
     /**
-     * 当 JdbcTemplate 存在时，仓储和路由器 Bean 应自动注册
+     * 当 JdbcTemplate 存在时，仓储、服务类和路由器 Bean 应自动注册
      */
     @Test
     void shouldRegisterRepositoryAndRouterBeans() {
         this.contextRunner.run(context -> {
             assertThat(context).hasSingleBean(VariantRepository.class);
             assertThat(context).hasSingleBean(ExperimentRepository.class);
+            assertThat(context).hasSingleBean(ExperimentService.class);
             assertThat(context).hasSingleBean(PromptRouter.class);
         });
     }
@@ -78,6 +80,7 @@ class PromptAbAutoConfigurationTest {
                 .run(context -> {
                     assertThat(context).doesNotHaveBean(VariantRepository.class);
                     assertThat(context).doesNotHaveBean(ExperimentRepository.class);
+                    assertThat(context).doesNotHaveBean(ExperimentService.class);
                     assertThat(context).doesNotHaveBean(PromptRouter.class);
                     assertThat(context).doesNotHaveBean(PromptRouterAdvisor.class);
                 });

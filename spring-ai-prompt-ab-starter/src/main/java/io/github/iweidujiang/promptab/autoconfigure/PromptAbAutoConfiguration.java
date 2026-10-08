@@ -2,6 +2,7 @@ package io.github.iweidujiang.promptab.autoconfigure;
 
 import io.github.iweidujiang.promptab.advisor.PromptRouterAdvisor;
 import io.github.iweidujiang.promptab.experiment.ExperimentRepository;
+import io.github.iweidujiang.promptab.experiment.ExperimentService;
 import io.github.iweidujiang.promptab.experiment.JdbcExperimentRepository;
 import io.github.iweidujiang.promptab.experiment.JdbcVariantRepository;
 import io.github.iweidujiang.promptab.experiment.VariantRepository;
@@ -39,6 +40,12 @@ public class PromptAbAutoConfiguration {
     @ConditionalOnBean(JdbcTemplate.class)
     public ExperimentRepository experimentRepository(JdbcTemplate jdbcTemplate) {
         return new JdbcExperimentRepository(jdbcTemplate);
+    }
+
+    @Bean
+    @ConditionalOnBean(ExperimentRepository.class)
+    public ExperimentService experimentService(ExperimentRepository experimentRepository) {
+        return new ExperimentService(experimentRepository);
     }
 
     @Bean
