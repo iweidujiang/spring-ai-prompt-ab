@@ -1,6 +1,8 @@
 package io.github.iweidujiang.promptab.advisor;
 
 import io.github.iweidujiang.promptab.domain.Variant;
+import io.github.iweidujiang.promptab.evaluator.EvaluationContext;
+import io.github.iweidujiang.promptab.evaluator.EvaluatorChain;
 import io.github.iweidujiang.promptab.experiment.VariantRepository;
 import io.github.iweidujiang.promptab.router.PromptRouter;
 import org.slf4j.Logger;
@@ -20,6 +22,7 @@ import java.util.Map;
  * <p>
  * 在 ChatClient 调用链中拦截请求，根据路由策略选择 Prompt 变体，
  * 替换原始 PromptTemplate 后继续执行。
+ * 调用完成后触发评估器链，将评估分数写入 metric_event。
  *
  * @author 微信公众号:苏渡苇 GitHub: https://github.com/iweidujiang
  * @since 2026-09-30
@@ -33,13 +36,22 @@ public class PromptRouterAdvisor implements CallAdvisor {
     private final PromptRouter promptRouter;
     private final VariantRepository variantRepository;
     private final String experimentKey;
+    private final EvaluatorChain evaluatorChain;
 
     public PromptRouterAdvisor(PromptRouter promptRouter,
                                VariantRepository variantRepository,
                                String experimentKey) {
+        this(promptRouter, variantRepository, experimentKey, null);
+    }
+
+    public PromptRouterAdvisor(PromptRouter promptRouter,
+                               VariantRepository variantRepository,
+                               String experimentKey,
+                               EvaluatorChain evaluatorChain) {
         this.promptRouter = promptRouter;
         this.variantRepository = variantRepository;
         this.experimentKey = experimentKey;
+        this.evaluatorChain = evaluatorChain;
     }
 
     @Override
@@ -79,8 +91,40 @@ public class PromptRouterAdvisor implements CallAdvisor {
         log.info("调用完成：experimentKey={}, variantKey={}, latencyMs={}",
                 experimentKey, variantKey, latencyMs);
 
+        // 触发评估器链
+        if (evaluatorChain != null) {
+            EvaluationContext evalContext = buildEvaluationContext(
+                    request, variant, variantKey, sessionId, latencyMs, response);
+            try {
+                evaluatorChain.evaluate(evalContext);
+            } catch (Exception e) {
+                log.warn("评估器链执行异常（不影响主链路）：{}", e.getMessage(), e);
+            }
+        }
+
         // 将 variantKey 写入响应上下文，便于下游指标采集
         return response.mutate().context(CONTEXT_VARIANT_KEY, variantKey).build();
+    }
+
+    private EvaluationContext buildEvaluationContext(ChatClientRequest request,
+                                                      Variant variant,
+                                                      String variantKey,
+                                                      String sessionId,
+                                                      long latencyMs,
+                                                      ChatClientResponse response) {
+        EvaluationContext context = new EvaluationContext();
+        context.setExperimentKey(experimentKey);
+        context.setVariantKey(variantKey);
+        context.setSessionId(sessionId);
+        context.setInput(request.prompt().getUserMessage().getText());
+        context.setOutput(response.chatResponse() != null
+                ? response.chatResponse().getResult().getOutput().getText()
+                : "");
+        context.setLatencyMs(latencyMs);
+        // token 统计暂从 metadata 中获取，后续可完善
+        context.setInputTokens(0);
+        context.setOutputTokens(0);
+        return context;
     }
 
     private Map<String, Object> buildRouterContext(ChatClientRequest request) {
