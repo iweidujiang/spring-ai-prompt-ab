@@ -1,6 +1,8 @@
 package io.github.iweidujiang.promptab.evaluator;
 
 import io.github.iweidujiang.promptab.domain.MetricEvent;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,10 +24,17 @@ public class EvaluatorChain {
 
     private final List<Evaluator> evaluators;
     private final MetricEventRepository metricEventRepository;
+    private final MeterRegistry meterRegistry;
 
     public EvaluatorChain(List<Evaluator> evaluators, MetricEventRepository metricEventRepository) {
+        this(evaluators, metricEventRepository, null);
+    }
+
+    public EvaluatorChain(List<Evaluator> evaluators, MetricEventRepository metricEventRepository,
+                          MeterRegistry meterRegistry) {
         this.evaluators = evaluators;
         this.metricEventRepository = metricEventRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -42,11 +51,24 @@ public class EvaluatorChain {
 
                 MetricEvent event = buildMetricEvent(context, evaluator.name(), score);
                 metricEventRepository.save(event);
+
+                recordEvaluationScore(evaluator.name(), score);
             } catch (Exception e) {
                 log.warn("评估器执行失败（不影响其他评估器）：evaluator={}, error={}",
                         evaluator.name(), e.getMessage(), e);
             }
         }
+    }
+
+    private void recordEvaluationScore(String evaluatorName, double score) {
+        if (meterRegistry == null) {
+            return;
+        }
+        DistributionSummary.builder("promptab.evaluation.score")
+                .tag("evaluatorName", evaluatorName)
+                .baseUnit("score")
+                .register(meterRegistry)
+                .record(score);
     }
 
     private MetricEvent buildMetricEvent(EvaluationContext context, String evaluatorName, double score) {

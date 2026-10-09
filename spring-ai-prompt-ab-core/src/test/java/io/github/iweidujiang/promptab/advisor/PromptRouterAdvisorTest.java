@@ -3,6 +3,8 @@ package io.github.iweidujiang.promptab.advisor;
 import io.github.iweidujiang.promptab.domain.Variant;
 import io.github.iweidujiang.promptab.experiment.VariantRepository;
 import io.github.iweidujiang.promptab.router.PromptRouter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClientRequest;
@@ -30,12 +32,14 @@ class PromptRouterAdvisorTest {
     private VariantRepository variantRepository;
     private CallAdvisorChain chain;
     private PromptRouterAdvisor advisor;
+    private MeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
         promptRouter = mock(PromptRouter.class);
         variantRepository = mock(VariantRepository.class);
         chain = mock(CallAdvisorChain.class);
+        meterRegistry = new SimpleMeterRegistry();
         advisor = new PromptRouterAdvisor(promptRouter, variantRepository, "test-exp");
     }
 
@@ -108,6 +112,67 @@ class PromptRouterAdvisorTest {
         when(chain.nextCall(any(ChatClientRequest.class))).thenReturn(mockResponse);
 
         // 不应抛出异常
+        assertDoesNotThrow(() -> advisor.adviseCall(request, chain));
+    }
+
+    /**
+     * 注入 MeterRegistry 后，路由决策 Counter 和延迟 Timer 被正确记录
+     */
+    @Test
+    void adviseCall_withMeterRegistry_recordsRoutingMetrics() {
+        Variant variant = createVariant("variant-a", "模板");
+        when(promptRouter.route(eq("test-exp"), anyMap())).thenReturn("variant-a");
+        when(variantRepository.findActiveByExperimentKey("test-exp"))
+                .thenReturn(List.of(variant));
+
+        ChatClientRequest request = ChatClientRequest.builder()
+                .prompt(new Prompt(new UserMessage("用户输入")))
+                .context(Map.of("sessionId", "user-123"))
+                .build();
+
+        ChatClientResponse mockResponse = ChatClientResponse.builder()
+                .chatResponse(mock(ChatResponse.class))
+                .build();
+        when(chain.nextCall(any(ChatClientRequest.class))).thenReturn(mockResponse);
+
+        PromptRouterAdvisor advisorWithMetrics = new PromptRouterAdvisor(
+                promptRouter, variantRepository, "test-exp", null, meterRegistry);
+        advisorWithMetrics.adviseCall(request, chain);
+
+        // 验证 Counter
+        double counterCount = meterRegistry.find("promptab.routing.decisions")
+                .tag("experimentKey", "test-exp")
+                .tag("variantKey", "variant-a")
+                .counter().count();
+        assertEquals(1.0, counterCount, 0.001);
+
+        // 验证 Timer
+        long timerCount = meterRegistry.find("promptab.routing.latency")
+                .tag("experimentKey", "test-exp")
+                .tag("variantKey", "variant-a")
+                .timer().count();
+        assertEquals(1, timerCount);
+    }
+
+    /**
+     * 未注入 MeterRegistry 时不报错（向后兼容）
+     */
+    @Test
+    void adviseCall_withoutMeterRegistry_doesNotThrow() {
+        Variant variant = createVariant("variant-a", "模板");
+        when(promptRouter.route(eq("test-exp"), anyMap())).thenReturn("variant-a");
+        when(variantRepository.findActiveByExperimentKey("test-exp"))
+                .thenReturn(List.of(variant));
+
+        ChatClientRequest request = ChatClientRequest.builder()
+                .prompt(new Prompt(new UserMessage("用户输入")))
+                .build();
+
+        ChatClientResponse mockResponse = ChatClientResponse.builder()
+                .chatResponse(mock(ChatResponse.class))
+                .build();
+        when(chain.nextCall(any(ChatClientRequest.class))).thenReturn(mockResponse);
+
         assertDoesNotThrow(() -> advisor.adviseCall(request, chain));
     }
 

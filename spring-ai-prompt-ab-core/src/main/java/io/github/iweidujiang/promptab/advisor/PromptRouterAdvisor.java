@@ -5,6 +5,9 @@ import io.github.iweidujiang.promptab.evaluator.EvaluationContext;
 import io.github.iweidujiang.promptab.evaluator.EvaluatorChain;
 import io.github.iweidujiang.promptab.experiment.VariantRepository;
 import io.github.iweidujiang.promptab.router.PromptRouter;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClientRequest;
@@ -13,6 +16,7 @@ import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
 import org.springframework.ai.chat.prompt.Prompt;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,21 +41,31 @@ public class PromptRouterAdvisor implements CallAdvisor {
     private final VariantRepository variantRepository;
     private final String experimentKey;
     private final EvaluatorChain evaluatorChain;
+    private final MeterRegistry meterRegistry;
 
     public PromptRouterAdvisor(PromptRouter promptRouter,
                                VariantRepository variantRepository,
                                String experimentKey) {
-        this(promptRouter, variantRepository, experimentKey, null);
+        this(promptRouter, variantRepository, experimentKey, null, null);
     }
 
     public PromptRouterAdvisor(PromptRouter promptRouter,
                                VariantRepository variantRepository,
                                String experimentKey,
                                EvaluatorChain evaluatorChain) {
+        this(promptRouter, variantRepository, experimentKey, evaluatorChain, null);
+    }
+
+    public PromptRouterAdvisor(PromptRouter promptRouter,
+                               VariantRepository variantRepository,
+                               String experimentKey,
+                               EvaluatorChain evaluatorChain,
+                               MeterRegistry meterRegistry) {
         this.promptRouter = promptRouter;
         this.variantRepository = variantRepository;
         this.experimentKey = experimentKey;
         this.evaluatorChain = evaluatorChain;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -75,6 +89,8 @@ public class PromptRouterAdvisor implements CallAdvisor {
         log.info("路由决策：experimentKey={}, sessionId={}, variantKey={}",
                 experimentKey, sessionId, variantKey);
 
+        recordRoutingDecision(experimentKey, variantKey);
+
         Variant variant = findVariant(variantKey);
         if (variant == null) {
             throw new IllegalStateException("找不到变体: " + variantKey);
@@ -91,6 +107,8 @@ public class PromptRouterAdvisor implements CallAdvisor {
         log.info("调用完成：experimentKey={}, variantKey={}, latencyMs={}",
                 experimentKey, variantKey, latencyMs);
 
+        recordRoutingLatency(experimentKey, variantKey, latencyMs);
+
         // 触发评估器链
         if (evaluatorChain != null) {
             EvaluationContext evalContext = buildEvaluationContext(
@@ -104,6 +122,28 @@ public class PromptRouterAdvisor implements CallAdvisor {
 
         // 将 variantKey 写入响应上下文，便于下游指标采集
         return response.mutate().context(CONTEXT_VARIANT_KEY, variantKey).build();
+    }
+
+    private void recordRoutingDecision(String experimentKey, String variantKey) {
+        if (meterRegistry == null) {
+            return;
+        }
+        Counter.builder("promptab.routing.decisions")
+                .tag("experimentKey", experimentKey)
+                .tag("variantKey", variantKey)
+                .register(meterRegistry)
+                .increment();
+    }
+
+    private void recordRoutingLatency(String experimentKey, String variantKey, long latencyMs) {
+        if (meterRegistry == null) {
+            return;
+        }
+        Timer.builder("promptab.routing.latency")
+                .tag("experimentKey", experimentKey)
+                .tag("variantKey", variantKey)
+                .register(meterRegistry)
+                .record(Duration.ofMillis(latencyMs));
     }
 
     private EvaluationContext buildEvaluationContext(ChatClientRequest request,

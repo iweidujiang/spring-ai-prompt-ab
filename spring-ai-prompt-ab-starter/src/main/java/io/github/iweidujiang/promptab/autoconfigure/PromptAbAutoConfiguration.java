@@ -13,6 +13,7 @@ import io.github.iweidujiang.promptab.experiment.VariantRepository;
 import io.github.iweidujiang.promptab.experiment.VariantService;
 import io.github.iweidujiang.promptab.router.HashPromptRouter;
 import io.github.iweidujiang.promptab.router.PromptRouter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -76,8 +77,10 @@ public class PromptAbAutoConfiguration {
     @Bean
     @ConditionalOnBean({MetricEventRepository.class})
     public EvaluatorChain evaluatorChain(ObjectProvider<Evaluator> evaluators,
-                                         MetricEventRepository metricEventRepository) {
-        return new EvaluatorChain(evaluators.orderedStream().toList(), metricEventRepository);
+                                         MetricEventRepository metricEventRepository,
+                                         ObjectProvider<MeterRegistry> meterRegistry) {
+        return new EvaluatorChain(evaluators.orderedStream().toList(), metricEventRepository,
+                meterRegistry.getIfAvailable());
     }
 
     @Bean
@@ -85,8 +88,10 @@ public class PromptAbAutoConfiguration {
     public PromptRouterAdvisor promptRouterAdvisor(PromptRouter promptRouter,
                                                    VariantRepository variantRepository,
                                                    PromptAbProperties properties,
-                                                   ObjectProvider<EvaluatorChain> evaluatorChain) {
+                                                   ObjectProvider<EvaluatorChain> evaluatorChain,
+                                                   ObjectProvider<MeterRegistry> meterRegistry) {
         return new PromptRouterAdvisor(promptRouter, variantRepository,
-                properties.getDefaultExperimentKey(), evaluatorChain.getIfAvailable());
+                properties.getDefaultExperimentKey(), evaluatorChain.getIfAvailable(),
+                meterRegistry.getIfAvailable());
     }
 }

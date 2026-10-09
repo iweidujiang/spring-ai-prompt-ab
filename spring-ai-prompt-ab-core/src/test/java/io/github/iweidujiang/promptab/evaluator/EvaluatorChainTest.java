@@ -1,6 +1,8 @@
 package io.github.iweidujiang.promptab.evaluator;
 
 import io.github.iweidujiang.promptab.domain.MetricEvent;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -120,6 +122,44 @@ class EvaluatorChainTest {
         assertEquals(10, event.getInputTokens());
         assertEquals(20, event.getOutputTokens());
         assertNotNull(event.getTimestamp());
+    }
+
+    /**
+     * 注入 MeterRegistry 后，评估分数通过 DistributionSummary 记录
+     */
+    @Test
+    void evaluate_withMeterRegistry_recordsScoreMetrics() {
+        MeterRegistry meterRegistry = new SimpleMeterRegistry();
+        Evaluator evaluator1 = new StubEvaluator("keyword", 0.8);
+        Evaluator evaluator2 = new StubEvaluator("latency", 0.6);
+
+        EvaluatorChain chain = new EvaluatorChain(List.of(evaluator1, evaluator2), metricEventRepository, meterRegistry);
+        chain.evaluate(context);
+
+        // 验证 keyword 评估器的分数记录
+        double keywordMean = meterRegistry.find("promptab.evaluation.score")
+                .tag("evaluatorName", "keyword")
+                .summary().mean();
+        assertEquals(0.8, keywordMean, 0.001);
+
+        // 验证 latency 评估器的分数记录
+        double latencyMean = meterRegistry.find("promptab.evaluation.score")
+                .tag("evaluatorName", "latency")
+                .summary().mean();
+        assertEquals(0.6, latencyMean, 0.001);
+    }
+
+    /**
+     * 未注入 MeterRegistry 时不报错（向后兼容）
+     */
+    @Test
+    void evaluate_withoutMeterRegistry_doesNotThrow() {
+        Evaluator evaluator = new StubEvaluator("test-eval", 0.5);
+
+        EvaluatorChain chain = new EvaluatorChain(List.of(evaluator), metricEventRepository);
+        chain.evaluate(context);
+
+        verify(metricEventRepository).save(any(MetricEvent.class));
     }
 
     private static class StubEvaluator implements Evaluator {
