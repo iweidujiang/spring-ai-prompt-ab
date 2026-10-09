@@ -78,9 +78,10 @@ public class PromptAbAutoConfiguration {
     @ConditionalOnBean({MetricEventRepository.class})
     public EvaluatorChain evaluatorChain(ObjectProvider<Evaluator> evaluators,
                                          MetricEventRepository metricEventRepository,
-                                         ObjectProvider<MeterRegistry> meterRegistry) {
+                                         ObjectProvider<MeterRegistry> meterRegistry,
+                                         PromptAbProperties properties) {
         return new EvaluatorChain(evaluators.orderedStream().toList(), metricEventRepository,
-                meterRegistry.getIfAvailable());
+                meterRegistry.getIfAvailable(), properties.getLogLevel());
     }
 
     @Bean
@@ -92,6 +93,6 @@ public class PromptAbAutoConfiguration {
                                                    ObjectProvider<MeterRegistry> meterRegistry) {
         return new PromptRouterAdvisor(promptRouter, variantRepository,
                 properties.getDefaultExperimentKey(), evaluatorChain.getIfAvailable(),
-                meterRegistry.getIfAvailable());
+                meterRegistry.getIfAvailable(), properties.getLogLevel());
     }
 }

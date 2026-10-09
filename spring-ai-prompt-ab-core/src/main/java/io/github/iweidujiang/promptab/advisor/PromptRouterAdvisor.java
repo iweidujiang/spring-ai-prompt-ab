@@ -4,12 +4,13 @@ import io.github.iweidujiang.promptab.domain.Variant;
 import io.github.iweidujiang.promptab.evaluator.EvaluationContext;
 import io.github.iweidujiang.promptab.evaluator.EvaluatorChain;
 import io.github.iweidujiang.promptab.experiment.VariantRepository;
+import io.github.iweidujiang.promptab.logging.ConfigurableLogger;
 import io.github.iweidujiang.promptab.router.PromptRouter;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
@@ -33,27 +34,30 @@ import java.util.Map;
  */
 public class PromptRouterAdvisor implements CallAdvisor {
 
-    private static final Logger log = LoggerFactory.getLogger(PromptRouterAdvisor.class);
     private static final String CONTEXT_VARIANT_KEY = "promptab.variantKey";
     private static final String CONTEXT_SESSION_ID = "sessionId";
+    private static final String MDC_SESSION_ID = "promptab.sessionId";
+    private static final String MDC_EXPERIMENT_KEY = "promptab.experimentKey";
+    private static final String MDC_VARIANT_KEY = "promptab.variantKey";
 
     private final PromptRouter promptRouter;
     private final VariantRepository variantRepository;
     private final String experimentKey;
     private final EvaluatorChain evaluatorChain;
     private final MeterRegistry meterRegistry;
+    private final ConfigurableLogger logger;
 
     public PromptRouterAdvisor(PromptRouter promptRouter,
                                VariantRepository variantRepository,
                                String experimentKey) {
-        this(promptRouter, variantRepository, experimentKey, null, null);
+        this(promptRouter, variantRepository, experimentKey, null, null, "INFO");
     }
 
     public PromptRouterAdvisor(PromptRouter promptRouter,
                                VariantRepository variantRepository,
                                String experimentKey,
                                EvaluatorChain evaluatorChain) {
-        this(promptRouter, variantRepository, experimentKey, evaluatorChain, null);
+        this(promptRouter, variantRepository, experimentKey, evaluatorChain, null, "INFO");
     }
 
     public PromptRouterAdvisor(PromptRouter promptRouter,
@@ -61,11 +65,22 @@ public class PromptRouterAdvisor implements CallAdvisor {
                                String experimentKey,
                                EvaluatorChain evaluatorChain,
                                MeterRegistry meterRegistry) {
+        this(promptRouter, variantRepository, experimentKey, evaluatorChain, meterRegistry, "INFO");
+    }
+
+    public PromptRouterAdvisor(PromptRouter promptRouter,
+                               VariantRepository variantRepository,
+                               String experimentKey,
+                               EvaluatorChain evaluatorChain,
+                               MeterRegistry meterRegistry,
+                               String logLevel) {
         this.promptRouter = promptRouter;
         this.variantRepository = variantRepository;
         this.experimentKey = experimentKey;
         this.evaluatorChain = evaluatorChain;
         this.meterRegistry = meterRegistry;
+        this.logger = new ConfigurableLogger(
+                LoggerFactory.getLogger(PromptRouterAdvisor.class), logLevel);
     }
 
     @Override
@@ -85,43 +100,51 @@ public class PromptRouterAdvisor implements CallAdvisor {
         Map<String, Object> routerContext = buildRouterContext(request);
         String sessionId = (String) routerContext.get(CONTEXT_SESSION_ID);
 
-        String variantKey = promptRouter.route(experimentKey, routerContext);
-        log.info("路由决策：experimentKey={}, sessionId={}, variantKey={}",
-                experimentKey, sessionId, variantKey);
+        MDC.put(MDC_SESSION_ID, sessionId);
+        MDC.put(MDC_EXPERIMENT_KEY, experimentKey);
 
-        recordRoutingDecision(experimentKey, variantKey);
+        try {
+            String variantKey = promptRouter.route(experimentKey, routerContext);
+            MDC.put(MDC_VARIANT_KEY, variantKey);
 
-        Variant variant = findVariant(variantKey);
-        if (variant == null) {
-            throw new IllegalStateException("找不到变体: " + variantKey);
-        }
+            logger.log("路由决策：experimentKey={}, variantKey={}, sessionId={}",
+                    experimentKey, variantKey, sessionId);
 
-        // 用变体的 prompt 模板替换原始用户消息
-        Prompt originalPrompt = request.prompt();
-        Prompt modifiedPrompt = originalPrompt.augmentUserMessage(variant.getPromptTemplate());
-        ChatClientRequest modifiedRequest = request.mutate().prompt(modifiedPrompt).build();
+            recordRoutingDecision(experimentKey, variantKey);
 
-        ChatClientResponse response = chain.nextCall(modifiedRequest);
-
-        long latencyMs = System.currentTimeMillis() - startTime;
-        log.info("调用完成：experimentKey={}, variantKey={}, latencyMs={}",
-                experimentKey, variantKey, latencyMs);
-
-        recordRoutingLatency(experimentKey, variantKey, latencyMs);
-
-        // 触发评估器链
-        if (evaluatorChain != null) {
-            EvaluationContext evalContext = buildEvaluationContext(
-                    request, variant, variantKey, sessionId, latencyMs, response);
-            try {
-                evaluatorChain.evaluate(evalContext);
-            } catch (Exception e) {
-                log.warn("评估器链执行异常（不影响主链路）：{}", e.getMessage(), e);
+            Variant variant = findVariant(variantKey);
+            if (variant == null) {
+                throw new IllegalStateException("找不到变体: " + variantKey);
             }
-        }
 
-        // 将 variantKey 写入响应上下文，便于下游指标采集
-        return response.mutate().context(CONTEXT_VARIANT_KEY, variantKey).build();
+            Prompt originalPrompt = request.prompt();
+            Prompt modifiedPrompt = originalPrompt.augmentUserMessage(variant.getPromptTemplate());
+            ChatClientRequest modifiedRequest = request.mutate().prompt(modifiedPrompt).build();
+
+            ChatClientResponse response = chain.nextCall(modifiedRequest);
+
+            long latencyMs = System.currentTimeMillis() - startTime;
+            logger.log("路由完成：experimentKey={}, variantKey={}, sessionId={}, latencyMs={}",
+                    experimentKey, variantKey, sessionId, latencyMs);
+
+            recordRoutingLatency(experimentKey, variantKey, latencyMs);
+
+            if (evaluatorChain != null) {
+                EvaluationContext evalContext = buildEvaluationContext(
+                        request, variant, variantKey, sessionId, latencyMs, response);
+                try {
+                    evaluatorChain.evaluate(evalContext);
+                } catch (Exception e) {
+                    logger.warn("评估器链执行异常（不影响主链路）：{}", e.getMessage(), e);
+                }
+            }
+
+            return response.mutate().context(CONTEXT_VARIANT_KEY, variantKey).build();
+        } finally {
+            MDC.remove(MDC_SESSION_ID);
+            MDC.remove(MDC_EXPERIMENT_KEY);
+            MDC.remove(MDC_VARIANT_KEY);
+        }
     }
 
     private void recordRoutingDecision(String experimentKey, String variantKey) {

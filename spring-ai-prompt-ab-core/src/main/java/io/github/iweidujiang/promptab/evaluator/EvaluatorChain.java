@@ -1,9 +1,9 @@
 package io.github.iweidujiang.promptab.evaluator;
 
 import io.github.iweidujiang.promptab.domain.MetricEvent;
+import io.github.iweidujiang.promptab.logging.ConfigurableLogger;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
-import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.LocalDateTime;
@@ -20,21 +20,27 @@ import java.util.List;
  */
 public class EvaluatorChain {
 
-    private static final Logger log = LoggerFactory.getLogger(EvaluatorChain.class);
-
     private final List<Evaluator> evaluators;
     private final MetricEventRepository metricEventRepository;
     private final MeterRegistry meterRegistry;
+    private final ConfigurableLogger logger;
 
     public EvaluatorChain(List<Evaluator> evaluators, MetricEventRepository metricEventRepository) {
-        this(evaluators, metricEventRepository, null);
+        this(evaluators, metricEventRepository, null, "INFO");
     }
 
     public EvaluatorChain(List<Evaluator> evaluators, MetricEventRepository metricEventRepository,
                           MeterRegistry meterRegistry) {
+        this(evaluators, metricEventRepository, meterRegistry, "INFO");
+    }
+
+    public EvaluatorChain(List<Evaluator> evaluators, MetricEventRepository metricEventRepository,
+                          MeterRegistry meterRegistry, String logLevel) {
         this.evaluators = evaluators;
         this.metricEventRepository = metricEventRepository;
         this.meterRegistry = meterRegistry;
+        this.logger = new ConfigurableLogger(
+                LoggerFactory.getLogger(EvaluatorChain.class), logLevel);
     }
 
     /**
@@ -45,16 +51,20 @@ public class EvaluatorChain {
     public void evaluate(EvaluationContext context) {
         for (Evaluator evaluator : evaluators) {
             try {
+                long evalStart = System.currentTimeMillis();
                 double score = evaluator.evaluate(context);
-                log.info("评估完成：evaluator={}, score={}, experimentKey={}, variantKey={}",
-                        evaluator.name(), score, context.getExperimentKey(), context.getVariantKey());
+                long evalLatencyMs = System.currentTimeMillis() - evalStart;
+
+                logger.log("评估完成：evaluator={}, score={}, latencyMs={}, experimentKey={}, variantKey={}, sessionId={}",
+                        evaluator.name(), score, evalLatencyMs,
+                        context.getExperimentKey(), context.getVariantKey(), context.getSessionId());
 
                 MetricEvent event = buildMetricEvent(context, evaluator.name(), score);
                 metricEventRepository.save(event);
 
                 recordEvaluationScore(evaluator.name(), score);
             } catch (Exception e) {
-                log.warn("评估器执行失败（不影响其他评估器）：evaluator={}, error={}",
+                logger.warn("评估器执行失败（不影响其他评估器）：evaluator={}, error={}",
                         evaluator.name(), e.getMessage(), e);
             }
         }

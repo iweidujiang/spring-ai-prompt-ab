@@ -5,8 +5,10 @@ import io.github.iweidujiang.promptab.experiment.VariantRepository;
 import io.github.iweidujiang.promptab.router.PromptRouter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
@@ -41,6 +43,11 @@ class PromptRouterAdvisorTest {
         chain = mock(CallAdvisorChain.class);
         meterRegistry = new SimpleMeterRegistry();
         advisor = new PromptRouterAdvisor(promptRouter, variantRepository, "test-exp");
+    }
+
+    @AfterEach
+    void tearDown() {
+        MDC.clear();
     }
 
     /**
@@ -174,6 +181,82 @@ class PromptRouterAdvisorTest {
         when(chain.nextCall(any(ChatClientRequest.class))).thenReturn(mockResponse);
 
         assertDoesNotThrow(() -> advisor.adviseCall(request, chain));
+    }
+
+    /**
+     * 调用完成后 MDC 被清理，不残留上下文
+     */
+    @Test
+    void adviseCall_afterCall_mdcIsCleaned() {
+        Variant variant = createVariant("variant-a", "模板");
+        when(promptRouter.route(eq("test-exp"), anyMap())).thenReturn("variant-a");
+        when(variantRepository.findActiveByExperimentKey("test-exp"))
+                .thenReturn(List.of(variant));
+
+        ChatClientRequest request = ChatClientRequest.builder()
+                .prompt(new Prompt(new UserMessage("用户输入")))
+                .context(Map.of("sessionId", "user-123"))
+                .build();
+
+        ChatClientResponse mockResponse = ChatClientResponse.builder()
+                .chatResponse(mock(ChatResponse.class))
+                .build();
+        when(chain.nextCall(any(ChatClientRequest.class))).thenReturn(mockResponse);
+
+        advisor.adviseCall(request, chain);
+
+        assertNull(MDC.get("promptab.sessionId"));
+        assertNull(MDC.get("promptab.experimentKey"));
+        assertNull(MDC.get("promptab.variantKey"));
+    }
+
+    /**
+     * 调用异常时 MDC 同样被清理
+     */
+    @Test
+    void adviseCall_onException_mdcIsCleaned() {
+        when(promptRouter.route(eq("test-exp"), anyMap())).thenReturn("non-existent");
+        when(variantRepository.findActiveByExperimentKey("test-exp"))
+                .thenReturn(List.of());
+
+        ChatClientRequest request = ChatClientRequest.builder()
+                .prompt(new Prompt(new UserMessage("用户输入")))
+                .context(Map.of("sessionId", "user-123"))
+                .build();
+
+        assertThrows(IllegalStateException.class, () -> advisor.adviseCall(request, chain));
+
+        assertNull(MDC.get("promptab.sessionId"));
+        assertNull(MDC.get("promptab.experimentKey"));
+        assertNull(MDC.get("promptab.variantKey"));
+    }
+
+    /**
+     * 调用期间 chain.nextCall 中可读取到 MDC 上下文
+     */
+    @Test
+    void adviseCall_duringCall_mdcContainsContext() {
+        Variant variant = createVariant("variant-a", "模板");
+        when(promptRouter.route(eq("test-exp"), anyMap())).thenReturn("variant-a");
+        when(variantRepository.findActiveByExperimentKey("test-exp"))
+                .thenReturn(List.of(variant));
+
+        ChatClientRequest request = ChatClientRequest.builder()
+                .prompt(new Prompt(new UserMessage("用户输入")))
+                .context(Map.of("sessionId", "user-123"))
+                .build();
+
+        ChatClientResponse mockResponse = ChatClientResponse.builder()
+                .chatResponse(mock(ChatResponse.class))
+                .build();
+        when(chain.nextCall(any(ChatClientRequest.class))).thenAnswer(invocation -> {
+            assertEquals("user-123", MDC.get("promptab.sessionId"));
+            assertEquals("test-exp", MDC.get("promptab.experimentKey"));
+            assertEquals("variant-a", MDC.get("promptab.variantKey"));
+            return mockResponse;
+        });
+
+        advisor.adviseCall(request, chain);
     }
 
     private Variant createVariant(String variantKey, String promptTemplate) {

@@ -23,6 +23,9 @@ public class PromptAbProperties {
     /** 是否启用 Micrometer 指标采集 */
     private boolean metricsEnabled = true;
 
+    /** 日志级别（TRACE / DEBUG / INFO / WARN / ERROR），默认 INFO */
+    private String logLevel = "INFO";
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -53,5 +56,13 @@ public class PromptAbProperties {
 
     public void setMetricsEnabled(boolean metricsEnabled) {
         this.metricsEnabled = metricsEnabled;
+    }
+
+    public String getLogLevel() {
+        return logLevel;
+    }
+
+    public void setLogLevel(String logLevel) {
+        this.logLevel = logLevel;
     }
 }
