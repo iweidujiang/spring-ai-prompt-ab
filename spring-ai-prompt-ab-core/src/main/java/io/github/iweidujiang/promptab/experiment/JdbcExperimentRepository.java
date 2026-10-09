@@ -29,6 +29,17 @@ public class JdbcExperimentRepository implements ExperimentRepository {
     }
 
     @Override
+    public Optional<Experiment> findById(Long id) {
+        String sql = """
+                SELECT id, experiment_key, description, status, created_at, updated_at
+                FROM ab_experiment
+                WHERE id = ?
+                """;
+        var results = jdbcTemplate.query(sql, new ExperimentRowMapper(), id);
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
+    }
+
+    @Override
     public Optional<Experiment> findByKey(String experimentKey) {
         String sql = """
                 SELECT id, experiment_key, description, status, created_at, updated_at
