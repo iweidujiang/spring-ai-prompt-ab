@@ -1,14 +1,20 @@
 package io.github.iweidujiang.promptab.autoconfigure;
 
 import io.github.iweidujiang.promptab.advisor.PromptRouterAdvisor;
+import io.github.iweidujiang.promptab.evaluator.Evaluator;
+import io.github.iweidujiang.promptab.evaluator.EvaluatorChain;
+import io.github.iweidujiang.promptab.evaluator.JdbcMetricEventRepository;
+import io.github.iweidujiang.promptab.evaluator.MetricEventRepository;
 import io.github.iweidujiang.promptab.experiment.ExperimentRepository;
 import io.github.iweidujiang.promptab.experiment.ExperimentService;
 import io.github.iweidujiang.promptab.experiment.JdbcExperimentRepository;
 import io.github.iweidujiang.promptab.experiment.JdbcVariantRepository;
 import io.github.iweidujiang.promptab.experiment.VariantRepository;
+import io.github.iweidujiang.promptab.experiment.VariantService;
 import io.github.iweidujiang.promptab.router.HashPromptRouter;
 import io.github.iweidujiang.promptab.router.PromptRouter;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -43,9 +49,22 @@ public class PromptAbAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnBean(JdbcTemplate.class)
+    public MetricEventRepository metricEventRepository(JdbcTemplate jdbcTemplate) {
+        return new JdbcMetricEventRepository(jdbcTemplate);
+    }
+
+    @Bean
     @ConditionalOnBean(ExperimentRepository.class)
     public ExperimentService experimentService(ExperimentRepository experimentRepository) {
         return new ExperimentService(experimentRepository);
+    }
+
+    @Bean
+    @ConditionalOnBean({VariantRepository.class, ExperimentRepository.class})
+    public VariantService variantService(VariantRepository variantRepository,
+                                         ExperimentRepository experimentRepository) {
+        return new VariantService(variantRepository, experimentRepository);
     }
 
     @Bean
@@ -55,10 +74,19 @@ public class PromptAbAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnBean({MetricEventRepository.class})
+    public EvaluatorChain evaluatorChain(ObjectProvider<Evaluator> evaluators,
+                                         MetricEventRepository metricEventRepository) {
+        return new EvaluatorChain(evaluators.orderedStream().toList(), metricEventRepository);
+    }
+
+    @Bean
     @ConditionalOnBean({PromptRouter.class, ChatModel.class})
     public PromptRouterAdvisor promptRouterAdvisor(PromptRouter promptRouter,
                                                    VariantRepository variantRepository,
-                                                   PromptAbProperties properties) {
-        return new PromptRouterAdvisor(promptRouter, variantRepository, properties.getDefaultExperimentKey());
+                                                   PromptAbProperties properties,
+                                                   ObjectProvider<EvaluatorChain> evaluatorChain) {
+        return new PromptRouterAdvisor(promptRouter, variantRepository,
+                properties.getDefaultExperimentKey(), evaluatorChain.getIfAvailable());
     }
 }

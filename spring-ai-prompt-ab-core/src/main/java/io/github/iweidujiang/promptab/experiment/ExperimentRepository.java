@@ -14,6 +14,14 @@ import java.util.Optional;
 public interface ExperimentRepository {
 
     /**
+     * 根据 ID 查询实验
+     *
+     * @param id 实验 ID
+     * @return 实验对象（可能为空）
+     */
+    Optional<Experiment> findById(Long id);
+
+    /**
      * 根据实验标识查询实验
      *
      * @param experimentKey 实验标识
