@@ -9,10 +9,15 @@ spring:
   h2:
     console:
       enabled: true
+      path: /h2-console
+  sql:
+    init:
+      mode: always
   flyway:
-    enabled: true
-    locations: classpath:db/migration
+    enabled: false
 
 prompt-ab:
   enabled: true
   default-routing-strategy: HASH
+  default-experiment-key: demo-chat
+  log-level: DEBUG
