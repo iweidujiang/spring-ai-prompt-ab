@@ -18,6 +18,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -28,6 +29,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <p>
  * 当 prompt-ab.enabled=true（默认）时，注册仓储、路由器和 Advisor Bean。
  * Advisor 仅在容器中存在 ChatModel 时才创建。
+ * <p>
+ * 仓储层使用 @ConditionalOnClass + ObjectProvider 代替 @ConditionalOnBean，
+ * 避免自动配置处理顺序导致 JdbcTemplate Bean 尚未注册时条件判定为 false。
  *
  * @author 微信公众号:苏渡苇 GitHub: https://github.com/iweidujiang
  * @since 2026-09-30
@@ -38,21 +42,21 @@ import org.springframework.jdbc.core.JdbcTemplate;
 public class PromptAbAutoConfiguration {
 
     @Bean
-    @ConditionalOnBean(JdbcTemplate.class)
-    public VariantRepository variantRepository(JdbcTemplate jdbcTemplate) {
-        return new JdbcVariantRepository(jdbcTemplate);
+    @ConditionalOnClass(JdbcTemplate.class)
+    public VariantRepository variantRepository(ObjectProvider<JdbcTemplate> jdbcTemplate) {
+        return new JdbcVariantRepository(jdbcTemplate.getIfAvailable());
     }
 
     @Bean
-    @ConditionalOnBean(JdbcTemplate.class)
-    public ExperimentRepository experimentRepository(JdbcTemplate jdbcTemplate) {
-        return new JdbcExperimentRepository(jdbcTemplate);
+    @ConditionalOnClass(JdbcTemplate.class)
+    public ExperimentRepository experimentRepository(ObjectProvider<JdbcTemplate> jdbcTemplate) {
+        return new JdbcExperimentRepository(jdbcTemplate.getIfAvailable());
     }
 
     @Bean
-    @ConditionalOnBean(JdbcTemplate.class)
-    public MetricEventRepository metricEventRepository(JdbcTemplate jdbcTemplate) {
-        return new JdbcMetricEventRepository(jdbcTemplate);
+    @ConditionalOnClass(JdbcTemplate.class)
+    public MetricEventRepository metricEventRepository(ObjectProvider<JdbcTemplate> jdbcTemplate) {
+        return new JdbcMetricEventRepository(jdbcTemplate.getIfAvailable());
     }
 
     @Bean

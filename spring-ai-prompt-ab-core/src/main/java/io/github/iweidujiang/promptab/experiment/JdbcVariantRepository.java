@@ -8,7 +8,6 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.List;
 import java.util.Optional;
 
@@ -69,7 +68,7 @@ public class JdbcVariantRepository implements VariantRepository {
                 """;
         var keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            PreparedStatement ps = connection.prepareStatement(sql, new String[]{"ID"});
             ps.setLong(1, variant.getExperimentId());
             ps.setString(2, variant.getVariantKey());
             ps.setString(3, variant.getPromptTemplate());

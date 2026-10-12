@@ -8,7 +8,6 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -70,7 +69,7 @@ public class JdbcExperimentRepository implements ExperimentRepository {
         LocalDateTime now = LocalDateTime.now();
         var keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            PreparedStatement ps = connection.prepareStatement(sql, new String[]{"ID"});
             ps.setString(1, experiment.getExperimentKey());
             ps.setString(2, experiment.getDescription());
             ps.setString(3, experiment.getStatus() != null ? experiment.getStatus() : "DRAFT");
